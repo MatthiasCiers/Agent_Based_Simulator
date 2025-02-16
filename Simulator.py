@@ -308,3 +308,4 @@ if __name__ == "__main__":
     print("Saving final event log...")
     model.check_transaction_status()
     model.save_log(log_path)
+
