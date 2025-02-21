@@ -1,9 +1,9 @@
-from typing import List
-from mesa import Agent, Model
 import datetime
 import random
+from typing import List
 import pandas as pd
-
+from mesa import Agent, Model
+import time
 
 class AccountAgent(Agent):
     def __init__(self, accountID, model, participant, cashBalance, creditLimit):
@@ -14,12 +14,7 @@ class AccountAgent(Agent):
         self.cashBalance = cashBalance
         self.securities = {} #dictionary to store securities: (securityType: amount)
         self.creditLimit = creditLimit
-        if not hasattr(self, 'initialized'):
-            self.model.log_event(f"Account {accountID} created with balance {cashBalance} and credit limit {creditLimit}", accountID, is_transaction=False)
-            self.initialized = True
-        else:
-            self.model.log_event(f"ERROR: Duplicate creation attempt for Account {accountID}", accountID, is_transaction=False)
-
+        self.model.log_event(f"Account {accountID} created with balance {cashBalance} and credit limit {creditLimit}", accountID, is_transaction=False)
 
     def checkSufficientCash(self, amount):
         return self.cashBalance + self.creditLimit >= amount
@@ -85,12 +80,7 @@ class InstitutionAgent(Agent):
         self.institutionID = institutionID
         self.allow_partial: bool = True #default state allows partial
         self.accounts: List[AccountAgent] = []
-
-        if not hasattr(self, 'initialized'):
-            self.model.log_event(f"Institution {institutionID} created", institutionID, is_transaction=False)
-            self.initialized = True
-        else:
-            self.model.log_event(f"ERROR: Duplicate creation attempt for Institution {institutionID}", institutionID, is_transaction=False)
+        self.model.log_event(f"Institution {institutionID} created", institutionID, is_transaction=False)
 
     def opt_out_partial(self):
         if not self.allow_partial:
@@ -214,18 +204,14 @@ class TransactionAgent(Agent):
         self.TransactionID = TransactionID
         self.state = 'Pending'
         self.seller = seller
-        self.sender = buyer
+        self.buyer = buyer
         self.amount = amount
         self.linkcode = linkcode
-        if not hasattr(self, 'initialized'):
-            self.model.log_event(f"Transaction {TransactionID} created from Account {sender.accountID} to Account {receiver.accountID} for {amount}", TransactionID, is_transaction=True)
-            self.initialized = True
-        else:
-            self.model.log_event(f"ERROR: Duplicate creation attempt for Transaction {TransactionID}", TransactionID, is_transaction=True)
+        self.model.log_event(f"Transaction {TransactionID} created from Account {seller.account.accountID} to Account {buyer.account.accountID} for {amount}", TransactionID, is_transaction=True)
 
     def validate(self):
         if self.state == 'Pending':
-            time.sleep(1) #1-second delay for validation
+            #.sleep(1) #1-second delay for validation
             self.state = 'Validated'
             self.model.log_event(f"Transaction {self.TransactionID} validated", self.TransactionID, is_transaction=True)
 
@@ -301,9 +287,7 @@ class SettlementModel(Model):
             print("Unsettled Transactions:")
             for t in self.transactions:
                 if t.state not in ["Settled", "Partially_Settled"]:
-                    print(f"Transaction {t.accountID} - State: {t.state}")
-
-
+                    print(f"Transaction {t.TransactionID} - State: {t.state}")
 
     def log_event(self, message, agent_id, is_transaction=True):
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
