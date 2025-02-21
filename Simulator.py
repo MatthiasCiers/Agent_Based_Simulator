@@ -335,28 +335,38 @@ class SettlementModel(Model):
         print(f"Activity log saved to {activity_filename}")
         print(f"Event Log saved to {filename}")
 
-
     def generate_sample_data(self):
-        # Introduce a mix of frozen and unfrozen participants
-        frozen_participant_ids = random.sample(range(5), 1)  # Reduce the number of initially frozen participants  # Randomly freeze 2 out of 5 participants
+        # Create institutions and accounts
         for i in range(5):
-            is_frozen = i in frozen_participant_ids
-            participant = InstitutionAgent(i, self)
-            if is_frozen:
-                participant.freeze()  # Freeze some participants at the start
+            participant = InstitutionAgent(i, self)  # Create institution
             self.participants.append(participant)
             self.schedule.append(participant)
-            account = AccountAgent(i, self, participant, cashBalance=random.randint(50, 200), creditLimit=random.randint(50, 100))
+
+            # Create an account for the institution
+            account = AccountAgent(
+                i, self, participant,
+                cashBalance=random.randint(50, 200),
+                creditLimit=random.randint(50, 100))
             participant.add_account(account)
             self.accounts.append(account)
             self.schedule.append(account)
 
+        # Create transactions
         for i in range(20):
             sender = random.choice(self.accounts)
             # Ensure some transactions will partially settle by choosing larger amounts
             amount = random.randint(100, 300) if sender.cashBalance < 100 else random.randint(30, 150)
             receiver = random.choice([acc for acc in self.accounts if acc != sender])
-            transaction = TransactionAgent(i, self, sender, receiver, amount=amount, linkcode=random.randint(0, 10))
+
+            # Create buyer and seller instructions
+            seller_instruction = InstructionAgent(
+                f"seller_{i}", "mother", "bond", amount, False, "pending", "seller", sender)
+            buyer_instruction = InstructionAgent(
+                f"buyer_{i}", "mother", "bond", amount, False, "pending", "buyer", receiver)
+
+            # Create transaction
+            transaction = TransactionAgent(
+                i, self, seller_instruction, buyer_instruction, amount=amount, linkcode=random.randint(0, 10))
             self.transactions.append(transaction)
             self.schedule.append(transaction)
 
