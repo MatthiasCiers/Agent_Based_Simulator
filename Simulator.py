@@ -329,8 +329,10 @@ class SettlementModel(Model):
             # Create an account for the institution
             account = AccountAgent(
                 i, self, participant,
-                cashBalance=random.randint(50, 200),
-                creditLimit=random.randint(50, 100))
+                cashBalance=random.randint(200, 500),
+                creditLimit=random.randint(10, 20))
+
+            account.updateSecurities("bond", random.randint(500, 1000))  # Add securities
             participant.add_account(account)
             self.accounts.append(account)
             self.schedule.append(account)
