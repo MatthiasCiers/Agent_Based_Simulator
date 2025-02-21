@@ -1,192 +1,268 @@
+from typing import List
 from mesa import Agent, Model
 import datetime
 import random
 import pandas as pd
 
-class Account(Agent):
-    def __init__(self, unique_id, model, participant, balance, credit_limit):
+
+class AccountAgent(Agent):
+    def __init__(self, accountID, model, participant, cashBalance, creditLimit):
         super().__init__(model)
-        self.unique_id = unique_id
-        self.state = 'Exists'
+        self.accountID = accountID
+        self.state = 'Pending'
         self.participant = participant
-        self.balance = balance
-        self.credit_limit = credit_limit
+        self.cashBalance = cashBalance
+        self.securities = {} #dictionary to store securities: (securityType: amount)
+        self.creditLimit = creditLimit
         if not hasattr(self, 'initialized'):
-            self.model.log_event(f"Account {unique_id} created with balance {balance} and credit limit {credit_limit}", unique_id, is_transaction=False)
+            self.model.log_event(f"Account {accountID} created with balance {cashBalance} and credit limit {creditLimit}", accountID, is_transaction=False)
             self.initialized = True
         else:
-            self.model.log_event(f"ERROR: Duplicate creation attempt for Account {unique_id}", unique_id, is_transaction=False)
+            self.model.log_event(f"ERROR: Duplicate creation attempt for Account {accountID}", accountID, is_transaction=False)
 
 
-    def has_funds(self, amount):
-        return self.balance + self.credit_limit >= amount
+    def checkSufficientCash(self, amount):
+        return self.cashBalance + self.creditLimit >= amount
 
-    def deduct_funds(self, amount):
-        self.model.log_event(f"Account {self.unique_id} checking funds for {amount}", self.unique_id, is_transaction=False)
+    def checkSufficientSecurities(self, securityType: str, amount: float) -> bool:
+        return self.securities.get(securityType, 0) >= amount
 
-        total_available = self.balance + self.credit_limit
-        if total_available == 0:
-            self.model.log_event(f"ERROR: Account {self.unique_id} has no available funds", self.unique_id, is_transaction=False)
+    def getCreditLimit(self):
+        return self.creditLimit
+
+    def getCashBalance(self):
+        return self.cashBalance
+
+    def updateSecurities(self, securityType: str, amount: float):
+        current_amount = self.securities.get(securityType, 0)
+        if current_amount + amount < 0:
+            self.model.log_event(f"ERROR: Account {self.accountID} has insufficient securities of type {securityType}",
+                                 self.accountID, is_transaction=False)
             return 0
 
-        deducted_amount = min(amount, total_available)
-
-        if self.balance >= deducted_amount:
-            self.balance -= deducted_amount
-        else:
-            remaining = deducted_amount - self.balance
-            self.balance = 0
-            self.credit_limit -= remaining
-
+        self.securities[securityType] = current_amount + amount
         self.model.log_event(
-            f"Account {self.unique_id} deducted {deducted_amount}, new balance: {self.balance}, new credit limit: {self.credit_limit}",
-            self.unique_id,
+            f"Account {self.accountID} updated securities {securityType} by {amount}, new amount: {self.securities[securityType]}",
+            self.accountID,
             is_transaction=False
         )
-        return deducted_amount
+        return amount
+
+    def updateCashBalance(self, amount: float):
+        total_available = self.cashBalance + self.creditLimit
+        if amount < 0 and total_available + amount < 0:  # Check if deducting more than available
+            self.model.log_event(f"ERROR: Account {self.accountID} has insufficient funds", self.accountID,
+                                 is_transaction=False)
+            return 0
+
+        if self.cashBalance + amount >= 0:
+            self.cashBalance += amount
+        else:
+            remaining = amount + self.cashBalance
+            self.cashBalance = 0
+            self.creditLimit += remaining
+
+        self.model.log_event(
+            f"Account {self.accountID} updated cash balance by {amount}, new balance: {self.cashBalance}, new credit limit: {self.creditLimit}",
+            self.accountID,
+            is_transaction=False
+        )
+        return amount
 
 
     def end_account(self):
         if self.state == 'Ended':
-            self.model.log_event(f"ERROR: Attempt to end an already ended Account {self.unique_id}", self.unique_id, is_transaction=False)
+            self.model.log_event(f"ERROR: Attempt to end an already ended Account {self.accountID}", self.accountID, is_transaction=False)
         else:
-            self.model.log_event(f"Account {self.unique_id} is ending", self.unique_id, is_transaction=False)
+            self.model.log_event(f"Account {self.accountID} is ending", self.accountID, is_transaction=False)
             self.state = 'Ended'
-            self.model.log_event(f"Account {self.unique_id} ended", self.unique_id, is_transaction=False)
+            self.model.log_event(f"Account {self.accountID} ended", self.accountID, is_transaction=False)
 
-class Participant(Agent):
+class InstitutionAgent(Agent):
 
-    def __init__(self, unique_id, model):
+    def __init__(self, institutionID, model):
         super().__init__(model)
-        self.unique_id = unique_id
-        self.state = 'Unfrozen_AllowPartial'
-        self.accounts = []
+        self.institutionID = institutionID
+        self.allow_partial: bool = True #default state allows partial
+        self.accounts: List[AccountAgent] = []
+
         if not hasattr(self, 'initialized'):
-            self.model.log_event(f"Participant {unique_id} created", unique_id, is_transaction=False)
+            self.model.log_event(f"Institution {institutionID} created", institutionID, is_transaction=False)
             self.initialized = True
         else:
-            self.model.log_event(f"ERROR: Duplicate creation attempt for Participant {unique_id}", unique_id, is_transaction=False)
+            self.model.log_event(f"ERROR: Duplicate creation attempt for Institution {institutionID}", institutionID, is_transaction=False)
 
     def opt_out_partial(self):
-        if self.state in ['Unfrozen_No_AllowPartial', 'Frozen_No_AllowPartial']:
-            self.model.log_event(f"ERROR: Participant {self.unique_id} already opted out of partial settlements", self.unique_id, is_transaction=False)
+        if not self.allow_partial:
+            self.model.log_event(f"ERROR: Institution {self.institutionID} already opted out of partial settlements", self.institutionID, is_transaction=False)
         else:
-            self.state = self.state.replace('AllowPartial', 'No_AllowPartial')
-            self.model.log_event(f"Participant {self.unique_id} opted out of partial settlements", self.unique_id, is_transaction=False)
+            self.allow_partial = False
+            self.model.log_event(f"Institution {self.institutionID} opted out of partial settlements", self.institutionID, is_transaction=False)
 
     def opt_in_partial(self):
-        if self.state in ['Unfrozen_AllowPartial', 'Frozen_AllowPartial']:
-            self.model.log_event(f"ERROR: Participant {self.unique_id} already opted in for partial settlements", self.unique_id, is_transaction=False)
+        if self.allow_partial:
+            self.model.log_event(f"ERROR: Institution {self.institutionID} already opted in for partial settlements", self.institutionID, is_transaction=False)
         else:
-            self.state = self.state.replace('No_AllowPartial', 'AllowPartial')
-            self.model.log_event(f"Participant {self.unique_id} opted in for partial settlements", self.unique_id, is_transaction=False)
+            self.allow_partial = True
+            self.model.log_event(f"Institution {self.institutionID} opted in for partial settlements", self.institutionID, is_transaction=False)
 
 
-    def add_account(self, account):
+    def add_account(self, account:AccountAgent):
         if account in self.accounts:
-            self.model.log_event(f"ERROR: Duplicate account addition attempt for Participant {self.unique_id}", self.unique_id, is_transaction=False)
+            self.model.log_event(f"ERROR: Duplicate account addition attempt for Institution {self.institutionID}", self.institutionID, is_transaction=False)
         else:
             self.accounts.append(account)
-            self.model.log_event(f"Participant {self.unique_id} added Account {account.unique_id}", self.unique_id, is_transaction=False)
-
-
-    def freeze(self):
-
-        if 'Frozen' in self.state:
-            self.model.log_event(f"ERROR: Attempt to freeze an already frozen Participant {self.unique_id}", self.unique_id, is_transaction=False)
-        else:
-            self.model.log_event(f"Participant {self.unique_id} attempting to freeze", self.unique_id, is_transaction=False)
-            self.state = self.state.replace('Unfrozen', 'Frozen')
-            self.model.log_event(f"Participant {self.unique_id} is now frozen, blocking all transactions", self.unique_id, is_transaction=False)
-
-
-    def unfreeze(self):
-        if 'Unfrozen' in self.state:
-            self.model.log_event(f"ERROR: Attempt to unfreeze an already unfrozen Participant {self.unique_id}", self.unique_id, is_transaction=False)
-        else:
-            self.model.log_event(f"Participant {self.unique_id} attempting to unfreeze", self.unique_id, is_transaction=False)
-            self.state = self.state.replace('Frozen', 'Unfrozen')
-            self.model.log_event(f"Participant {self.unique_id} unfrozen", self.unique_id, is_transaction=False)
+            self.model.log_event(f"Institution {self.institutionID} added Account {account.accountID}", self.institutionID, is_transaction=False)
 
     def step(self):
-        self.model.log_event(f"Participant {self.unique_id} stepping - State: {self.state}", self.unique_id, is_transaction=False)
-
-        if 'Frozen' in self.state:
-            self.model.log_event(f"Participant {self.unique_id} is frozen and cannot perform transactions", self.unique_id, is_transaction=False)
-            return  # Skip any transaction-related actions
-
-
-
-    # Participants might modify their settings (randomly for testing)
-        if random.random() < 0.1:  # 10% chance to toggle AllowPartial
-            if self.state in ['Unfrozen_AllowPartial', 'Frozen_AllowPartial']:
+        self.model.log_event(f"Institution {self.institutionID} stepping - Allow Partial: {self.allow_partial}", self.institutionID, is_transaction=False)    # Participants might modify their settings (randomly for testing)
+        if random.random() < 0.1:
+            if self.allow_partial:
                 self.opt_out_partial()
             else:
                 self.opt_in_partial()
 
 
+class InstructionAgent:
+    def __init__(self, uniqueID: str, motherID: str, securityType: str, amount: float, isChild: bool, status: str,
+                 role: str, account: AccountAgent):
+        self.uniqueID = uniqueID
+        self.motherID = motherID
+        self.securityType = securityType
+        self.amount = amount
+        self.isChild = isChild
+        self.childInstructions: List['InstructionAgent'] = []
+        self.status = status
+        self.role = role  # seller/buyer
+        self.account = account
+        self.creation_time = datetime.datetime.now() # track creation time for timeout
 
-class Transaction(Agent):
-    def __init__(self, unique_id, model, sender, receiver, amount, linkcode):
+    def createChildren(self):
+        if self.role == "buyer" and not self.account.checkSufficientCash(self.amount):
+            available_cash = self.account.getCashBalance() + self.account.getCreditLimit()
+            if available_cash > 0:
+                # Create buyer child instructions
+                buyer_child1 = InstructionAgent(
+                    f"{self.uniqueID}_1", self.uniqueID, self.securityType, available_cash, True,
+                    "settled", "buyer", self.account)
+                buyer_child2 = InstructionAgent(
+                    f"{self.uniqueID}_2", self.uniqueID, self.securityType, self.amount - available_cash, True,
+                    "pending", "buyer", self.account)
+
+                # Update buyer's account for settled amount
+                self.account.updateCashBalance(-available_cash)
+
+                # Add child instructions to the model @ruben dont know what this should do tbh
+                self.model.schedule.add(buyer_child1)
+                self.model.schedule.add(buyer_child2)
+
+                self.model.log_event(
+                    f"Buyer instruction {self.uniqueID} created child instructions for partial settlement",
+                    self.uniqueID, is_transaction=True)
+
+        elif self.role == "seller" and not self.account.checkSufficientSecurities(self.securityType, self.amount):
+            available_securities = self.account.checkSufficientSecurities(self.securityType, self.amount)
+            if available_securities > 0:
+                # Create seller child instructions
+                seller_child1 = InstructionAgent(
+                    f"{self.uniqueID}_1", self.uniqueID, self.securityType, available_securities, True,
+                    "settled", "seller", self.account
+                )
+                seller_child2 = InstructionAgent(
+                    f"{self.uniqueID}_2", self.uniqueID, self.securityType, self.amount - available_securities, True,
+                    "pending", "seller", self.account
+                )
+
+                # Update seller's account for settled amount
+                self.account.updateSecurities(self.securityType, -available_securities)
+
+                # Add child instructions to the model @ruben same here i dont know what this does
+                self.model.schedule.add(seller_child1)
+                self.model.schedule.add(seller_child2)
+
+                self.model.log_event(
+                    f"Seller instruction {self.uniqueID} created child instructions for partial settlement",
+                    self.uniqueID, is_transaction=True)
+
+
+    def settle(self):
+        if self.role == "seller":
+            if self.account.checkSufficientSecurities(self.securityType, self.amount):
+                self.account.updateSecurities(self.securityType, -self.amount)
+                self.status = "settled"
+            else:
+                self.status = "failed"
+        elif self.role == "buyer":
+            if self.account.checkSufficientCash(self.amount):
+                self.account.updateCashBalance(-self.amount)
+                self.account.updateSecurities(self.securityType, self.amount)
+                self.status = "settled"
+            else:
+                self.createChildren()
+                self.status = "failed"
+
+    def checkSecurities(self) -> bool:
+        return self.role == "seller"  # Only sellers check securities
+
+    def checkCash(self) -> bool:
+        return self.role == "buyer"  # Only buyers check cash
+
+
+class TransactionAgent(Agent):
+    def __init__(self, TransactionID, model, seller: InstructionAgent, buyer: InstructionAgent, amount, linkcode):
         super().__init__(model)
-        self.unique_id = unique_id
-        self.state = 'Exists'
-        self.sender = sender
-        self.receiver = receiver
+        self.TransactionID = TransactionID
+        self.state = 'Pending'
+        self.seller = seller
+        self.sender = buyer
         self.amount = amount
         self.linkcode = linkcode
         if not hasattr(self, 'initialized'):
-            self.model.log_event(f"Transaction {unique_id} created from Account {sender.unique_id} to Account {receiver.unique_id} for {amount}", unique_id, is_transaction=True)
+            self.model.log_event(f"Transaction {TransactionID} created from Account {sender.accountID} to Account {receiver.accountID} for {amount}", TransactionID, is_transaction=True)
             self.initialized = True
         else:
-            self.model.log_event(f"ERROR: Duplicate creation attempt for Transaction {unique_id}", unique_id, is_transaction=True)
-
-
-    def transition(self):
-        if self.state == 'Exists':
-            self.state = 'Pending'
-            self.model.log_event(f"Transaction {self.unique_id} moved to Pending", self.unique_id, is_transaction=True)
+            self.model.log_event(f"ERROR: Duplicate creation attempt for Transaction {TransactionID}", TransactionID, is_transaction=True)
 
     def validate(self):
         if self.state == 'Pending':
+            time.sleep(1) #1-second delay for validation
             self.state = 'Validated'
-            self.model.log_event(f"Transaction {self.unique_id} validated", self.unique_id, is_transaction=True)
+            self.model.log_event(f"Transaction {self.TransactionID} validated", self.TransactionID, is_transaction=True)
 
     def match(self):
-        self.model.log_event(f"Transaction {self.unique_id} attempting to find a match", self.unique_id, is_transaction=True)
+        self.model.log_event(f"Transaction {self.TransactionID} attempting to find a match", self.TransactionID, is_transaction=True)
         if self.state == 'Validated':
-            for other in self.model.transactions:
-                if other != self and other.state == 'Validated' and other.linkcode == self.linkcode:
-                    self.state = 'Matched'
-                    other.state = 'Matched'
-                    self.model.log_event(f"Transaction {self.unique_id} matched with {other.unique_id}", self.unique_id)
-                    return
+            # Match buyer and seller instructions
+            if self.buyer.role == "buyer" and self.seller.role == "seller":
+                self.state = 'Matched'
+                self.model.log_event(f"Transaction {self.TransactionID} matched with buyer {self.buyer.uniqueID} and seller {self.seller.uniqueID}",self.TransactionID)
 
     def settle(self):
-        self.model.log_event(f"Transaction {self.unique_id} attempting to settle", self.unique_id, is_transaction=True)
+        self.model.log_event(f"Transaction {self.TransactionID} attempting to settle", self.TransactionID,is_transaction=True)
 
         if self.state in ['Matched', 'Partially_Settled']:  # Allow reattempts for partial settlements
-            deducted = self.sender.deduct_funds(self.amount)
+            # Check if both buyer and seller can settle
+            if self.buyer.checkCash() and self.seller.checkSecurities():
+                # Deduct cash from buyer and securities from seller
+                buyer_settled = self.buyer.account.updateCashBalance(-self.amount)
+                seller_settled = self.seller.account.updateSecurities(self.seller.securityType, -self.amount)
 
-            if deducted > 0:
-                self.receiver.balance += deducted
-                self.model.log_event(f"Account {self.receiver.unique_id} credited with {deducted}, new balance: {self.receiver.balance}", self.receiver.unique_id, is_transaction=False)  # Credit the receiver's account
-
-
-            if deducted == self.amount:
-                self.state = 'Settled'
-                self.model.log_event(f"Transaction {self.unique_id} settled fully", self.unique_id)
-            elif deducted > 0:
-                self.amount -= deducted
-                self.state = 'Partially_Settled'
-                self.model.log_event(f"Transaction {self.unique_id} partially settled with {deducted}, remaining amount: {self.amount}", self.unique_id)
+                if buyer_settled > 0 and seller_settled > 0:
+                    self.state = 'Settled'
+                    self.model.log_event(f"Transaction {self.TransactionID} settled fully", self.TransactionID)
+                else:
+                    self.state = 'Failed'
+                    self.model.log_event(f"ERROR: Transaction {self.TransactionID} failed to settle", self.TransactionID, is_transaction=True)
             else:
-                self.model.log_event(f"ERROR: Transaction {self.unique_id} could not be settled due to insufficient funds", self.unique_id, is_transaction=True)
-
+                # Create child instructions for partial settlement
+                self.buyer.createChildren()
+                self.seller.createChildren()
+                self.state = 'Partially_Settled'
+                self.model.log_event(f"Transaction {self.TransactionID} partially settled", self.TransactionID, is_transaction=True)
 
     def step(self):
         # Removed duplicate Transaction.step method to avoid conflicting transitions
-      self.model.log_event(f"Transaction {self.unique_id} executing step", self.unique_id, is_transaction=True)
+      self.model.log_event(f"Transaction {self.TransactionID} executing step", self.TransactionID, is_transaction=True)
 
       if self.state == 'Exists':
           self.transition()
@@ -225,7 +301,7 @@ class SettlementModel(Model):
             print("Unsettled Transactions:")
             for t in self.transactions:
                 if t.state not in ["Settled", "Partially_Settled"]:
-                    print(f"Transaction {t.unique_id} - State: {t.state}")
+                    print(f"Transaction {t.accountID} - State: {t.state}")
 
 
 
@@ -265,12 +341,12 @@ class SettlementModel(Model):
         frozen_participant_ids = random.sample(range(5), 1)  # Reduce the number of initially frozen participants  # Randomly freeze 2 out of 5 participants
         for i in range(5):
             is_frozen = i in frozen_participant_ids
-            participant = Participant(i, self)
+            participant = InstitutionAgent(i, self)
             if is_frozen:
                 participant.freeze()  # Freeze some participants at the start
             self.participants.append(participant)
             self.schedule.append(participant)
-            account = Account(i, self, participant, balance=random.randint(50, 200), credit_limit=random.randint(50, 100))
+            account = AccountAgent(i, self, participant, cashBalance=random.randint(50, 200), creditLimit=random.randint(50, 100))
             participant.add_account(account)
             self.accounts.append(account)
             self.schedule.append(account)
@@ -278,17 +354,17 @@ class SettlementModel(Model):
         for i in range(20):
             sender = random.choice(self.accounts)
             # Ensure some transactions will partially settle by choosing larger amounts
-            amount = random.randint(100, 300) if sender.balance < 100 else random.randint(30, 150)
+            amount = random.randint(100, 300) if sender.cashBalance < 100 else random.randint(30, 150)
             receiver = random.choice([acc for acc in self.accounts if acc != sender])
-            transaction = Transaction(i, self, sender, receiver, amount=amount, linkcode=random.randint(0, 10))
+            transaction = TransactionAgent(i, self, sender, receiver, amount=amount, linkcode=random.randint(0, 10))
             self.transactions.append(transaction)
             self.schedule.append(transaction)
 
     def step(self):
         print(f"Running simulation step {self.schedule.count}...")
         for _ in range(len(self.schedule)):
-            agent = random.choices(self.schedule, weights=[0.95 if isinstance(a, Transaction) else 0.025 for a in self.schedule])[0]
-            if isinstance(agent, Transaction) or isinstance(agent, Participant) or isinstance(agent, Account):
+            agent = random.choices(self.schedule, weights=[0.95 if isinstance(a, TransactionAgent) else 0.025 for a in self.schedule])[0]
+            if isinstance(agent, TransactionAgent) or isinstance(agent, InstitutionAgent) or isinstance(agent, AccountAgent):
                 agent.step()
         print("Step completed.")
 
