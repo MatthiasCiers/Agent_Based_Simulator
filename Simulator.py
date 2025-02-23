@@ -4,7 +4,7 @@ from typing import List
 import pandas as pd
 from mesa import Agent, Model
 import time
-
+#aanpassing
 class AccountAgent(Agent):
     def __init__(self, accountID, model, participant, cashBalance, creditLimit):
         super().__init__(model)
