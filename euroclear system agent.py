@@ -3,7 +3,7 @@ import datetime
 import csv
 from mesa import Agent, Model
 from mesa.time import RandomActivation
-
+#alternative way of modeling, we have to dubblecheck if this is more useful
 # --- Logger Class (unchanged) ---
 class Logger:
     def __init__(self):
