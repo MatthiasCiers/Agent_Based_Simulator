@@ -22,4 +22,4 @@ class Instruction:
                 f"timestamp: {self.timestamp})")
 
 
-    #new
+    #for generator

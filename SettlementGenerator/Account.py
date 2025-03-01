@@ -14,3 +14,6 @@ class Account:
                 f"State: {self.state}, Cash Balance: {self.cashBalance}, Securities: {self.securities}, "
           
                 f"Credit Limit: {self.creditLimit}")
+
+
+    #for generator

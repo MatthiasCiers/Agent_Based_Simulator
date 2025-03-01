@@ -6,4 +6,4 @@ class Transaction:
 
     def __str__(self):
         return f"Transaction({self.transaction_id})"
-    #new
+    #for generator
